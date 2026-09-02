@@ -56,10 +56,22 @@ fn sidebar_section_heights(total_h: u16, split_ratio: f32) -> (u16, u16) {
     (ws_h, detail_h)
 }
 
+#[cfg(test)]
 pub(crate) fn expanded_sidebar_sections(area: Rect, split_ratio: f32) -> (Rect, Rect) {
+    expanded_sidebar_sections_with_agent_panel(area, split_ratio, true)
+}
+
+pub(crate) fn expanded_sidebar_sections_with_agent_panel(
+    area: Rect,
+    split_ratio: f32,
+    show_agent_panel: bool,
+) -> (Rect, Rect) {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     if content.width == 0 || content.height == 0 {
         return (Rect::default(), Rect::default());
+    }
+    if !show_agent_panel {
+        return (content, Rect::default());
     }
 
     let (ws_h, detail_h) = sidebar_section_heights(content.height, split_ratio);
@@ -68,9 +80,18 @@ pub(crate) fn expanded_sidebar_sections(area: Rect, split_ratio: f32) -> (Rect, 
     (ws_area, detail_area)
 }
 
+#[cfg(test)]
 pub(crate) fn sidebar_section_divider_rect(area: Rect, split_ratio: f32) -> Rect {
+    sidebar_section_divider_rect_with_agent_panel(area, split_ratio, true)
+}
+
+pub(crate) fn sidebar_section_divider_rect_with_agent_panel(
+    area: Rect,
+    split_ratio: f32,
+    show_agent_panel: bool,
+) -> Rect {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
-    if content.width == 0 || content.height < 6 {
+    if !show_agent_panel || content.width == 0 || content.height < 6 {
         return Rect::default();
     }
 
@@ -311,7 +332,8 @@ pub(crate) fn next_entry_is_indented_workspace(entries: &[WorkspaceListEntry], i
 }
 
 pub(crate) fn normalized_workspace_scroll(app: &AppState, area: Rect, requested: usize) -> usize {
-    let ws_area = workspace_list_rect(area, app.sidebar_section_split);
+    let ws_area =
+        workspace_list_rect_with_agent_panel(area, app.sidebar_section_split, app.show_agent_panel);
     let body = workspace_list_body_rect(ws_area, false);
     if body.height == 0 {
         return requested;
@@ -435,8 +457,19 @@ fn workspace_list_entries_inner(app: &AppState, force_expanded: bool) -> Vec<Wor
     entries
 }
 
+#[cfg(test)]
 pub(crate) fn workspace_list_rect(area: Rect, split_ratio: f32) -> Rect {
     let (ws_area, _) = expanded_sidebar_sections(area, split_ratio);
+    ws_area
+}
+
+pub(crate) fn workspace_list_rect_with_agent_panel(
+    area: Rect,
+    split_ratio: f32,
+    show_agent_panel: bool,
+) -> Rect {
+    let (ws_area, _) =
+        expanded_sidebar_sections_with_agent_panel(area, split_ratio, show_agent_panel);
     ws_area
 }
 
@@ -659,7 +692,8 @@ pub(crate) fn compute_workspace_list_areas(
     app: &AppState,
     area: Rect,
 ) -> (Vec<crate::app::state::WorkspaceCardArea>, Vec<()>) {
-    let ws_area = workspace_list_rect(area, app.sidebar_section_split);
+    let ws_area =
+        workspace_list_rect_with_agent_panel(area, app.sidebar_section_split, app.show_agent_panel);
     if ws_area == Rect::default() {
         return (Vec::new(), Vec::new());
     }
@@ -725,10 +759,21 @@ pub(crate) fn workspace_group_chevron_rect(card: &crate::app::state::WorkspaceCa
 }
 
 /// Auto-scale sidebar width based on workspace identity + agent summary.
+#[cfg(test)]
 pub(crate) fn collapsed_sidebar_sections(area: Rect) -> (Rect, Option<u16>, Rect) {
+    collapsed_sidebar_sections_with_agent_panel(area, true)
+}
+
+pub(crate) fn collapsed_sidebar_sections_with_agent_panel(
+    area: Rect,
+    show_agent_panel: bool,
+) -> (Rect, Option<u16>, Rect) {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     if content.width == 0 || content.height == 0 {
         return (Rect::default(), None, Rect::default());
+    }
+    if !show_agent_panel {
+        return (content, None, Rect::default());
     }
 
     if content.height < 7 {
@@ -780,7 +825,8 @@ pub(super) fn render_sidebar_collapsed(app: &AppState, frame: &mut Frame, area: 
         buf[(sep_x, y)].set_style(sep_style);
     }
 
-    let (ws_area, divider_y, detail_area) = collapsed_sidebar_sections(area);
+    let (ws_area, divider_y, detail_area) =
+        collapsed_sidebar_sections_with_agent_panel(area, app.show_agent_panel);
     if ws_area == Rect::default() {
         render_sidebar_toggle(app, frame, area, true, p);
         return;
@@ -1002,7 +1048,11 @@ pub(super) fn render_sidebar(
         buf[(sep_x, y)].set_style(sep_style);
     }
 
-    let (ws_area, detail_area) = expanded_sidebar_sections(area, app.sidebar_section_split);
+    let (ws_area, detail_area) = expanded_sidebar_sections_with_agent_panel(
+        area,
+        app.sidebar_section_split,
+        app.show_agent_panel,
+    );
 
     render_workspace_list(app, terminal_runtimes, frame, ws_area, is_navigating);
     render_agent_detail(app, terminal_runtimes, frame, detail_area);
@@ -1648,6 +1698,56 @@ mod tests {
             .content
             .iter()
             .all(|cell| cell.bg == app.palette.sidebar_bg));
+    }
+
+    #[test]
+    fn hidden_agent_panel_gives_the_desktop_sidebar_to_spaces() {
+        let mut app = crate::app::state::AppState::test_new();
+        let workspace = Workspace::test_new("one");
+        let pane_id = workspace.tabs[0].root_pane;
+        app.workspaces = vec![workspace];
+        app.ensure_test_terminals();
+        let terminal_id = app.workspaces[0].tabs[0].panes[&pane_id]
+            .attached_terminal_id
+            .clone();
+        app.terminals.get_mut(&terminal_id).unwrap().detected_agent = Some(Agent::Pi);
+        app.show_agent_panel = false;
+        let area = Rect::new(0, 0, 26, 20);
+        app.view.workspace_card_areas = compute_workspace_card_areas(&app, area);
+
+        let (workspace_area, agent_area) = expanded_sidebar_sections_with_agent_panel(
+            area,
+            app.sidebar_section_split,
+            app.show_agent_panel,
+        );
+        assert_eq!(workspace_area, Rect::new(0, 0, 25, 20));
+        assert_eq!(agent_area, Rect::default());
+        assert_eq!(
+            sidebar_section_divider_rect_with_agent_panel(
+                area,
+                app.sidebar_section_split,
+                app.show_agent_panel,
+            ),
+            Rect::default()
+        );
+
+        let mut expanded = Terminal::new(TestBackend::new(26, 20)).unwrap();
+        expanded
+            .draw(|frame| render_sidebar(&app, &TerminalRuntimeRegistry::new(), frame, area))
+            .unwrap();
+        let expanded_text = (0..area.height)
+            .map(|row| row_text(expanded.backend().buffer(), row, area.width))
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert!(expanded_text.contains("spaces"));
+        assert!(!expanded_text.contains("agents"));
+        assert!(!expanded_text.contains("pi"));
+
+        let (collapsed_workspace_area, divider_y, collapsed_agent_area) =
+            collapsed_sidebar_sections_with_agent_panel(area, app.show_agent_panel);
+        assert_eq!(collapsed_workspace_area, Rect::new(0, 0, 25, 20));
+        assert_eq!(divider_y, None);
+        assert_eq!(collapsed_agent_area, Rect::default());
     }
 
     #[test]

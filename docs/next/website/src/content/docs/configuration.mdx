@@ -327,6 +327,16 @@ status_indicators = "symbols"
 
 The symbols are static, so this option does not enable spinner animation.
 
+To give Spaces the full height of the desktop sidebar, hide the Agents panel:
+
+```toml
+[ui]
+show_agent_panel = false
+```
+
+This setting affects both expanded and collapsed desktop sidebars. Agent detection,
+notifications, keyboard actions, API views, and the mobile Agents view remain available.
+
 ### Sidebar row layouts
 
 The expanded desktop sidebar renders each inner array in `rows` as one line. These are the complete default layouts:

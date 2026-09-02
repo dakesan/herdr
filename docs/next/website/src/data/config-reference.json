@@ -800,6 +800,12 @@
           ]
         },
         {
+          "key": "ui.show_agent_panel",
+          "type": "boolean",
+          "default": "true",
+          "description": "Show the Agents panel in the expanded and collapsed desktop sidebar. Agent detection, notifications, and the mobile Agents view remain available."
+        },
+        {
           "key": "ui.status_indicators",
           "type": "enum",
           "default": "\"dots\"",

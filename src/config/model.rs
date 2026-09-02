@@ -900,6 +900,8 @@ pub struct UiConfig {
     pub window_title: String,
     /// Agent sidebar ordering. Saved values are "spaces" or "priority". Default: "spaces".
     pub agent_panel_sort: AgentPanelSortConfig,
+    /// Show the Agents panel in the desktop sidebar. Default: true.
+    pub show_agent_panel: bool,
     /// Retired setting that Herdr wrote before the workspace filter was removed.
     #[serde(rename = "agent_panel_scope")]
     _legacy_agent_panel_scope: Option<LegacyAgentPanelScopeConfig>,
@@ -1127,6 +1129,7 @@ impl Default for UiConfig {
             tab_bar_right_separator: " ".into(),
             window_title: super::window_title::default_window_title(),
             agent_panel_sort: AgentPanelSortConfig::Spaces,
+            show_agent_panel: true,
             _legacy_agent_panel_scope: None,
             status_indicators: StatusIndicatorStyle::Dots,
             sidebar: SidebarConfig::default(),
@@ -1371,6 +1374,18 @@ agent_panel_scope = "current"
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.ui.agent_panel_sort, AgentPanelSortConfig::Spaces);
+    }
+
+    #[test]
+    fn show_agent_panel_defaults_to_true_and_parses_false() {
+        assert!(Config::default().ui.show_agent_panel);
+
+        let toml = r#"
+[ui]
+show_agent_panel = false
+"#;
+        let config: Config = toml::from_str(toml).unwrap();
+        assert!(!config.ui.show_agent_panel);
     }
 
     #[test]

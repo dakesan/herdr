@@ -1560,13 +1560,14 @@ impl AppState {
     }
 
     pub(crate) fn ensure_agent_panel_entry_visible(&mut self, idx: usize) {
-        if self.sidebar_collapsed {
+        if self.sidebar_collapsed || !self.show_agent_panel {
             return;
         }
 
-        let (_, detail_area) = crate::ui::expanded_sidebar_sections(
+        let (_, detail_area) = crate::ui::expanded_sidebar_sections_with_agent_panel(
             self.view.sidebar_rect,
             self.sidebar_section_split,
+            self.show_agent_panel,
         );
         self.agent_panel_scroll = crate::ui::agent_panel_scroll_for_target(
             self,
@@ -4264,6 +4265,7 @@ mod tests {
         state.active = Some(0);
         state.selected = 0;
         state.mode = Mode::Terminal;
+        state.show_agent_panel = false;
         mark_agent(&mut state, 0, 0, first_root);
         mark_agent(&mut state, 0, 0, first_second);
         mark_agent(&mut state, 1, 0, second_root);

@@ -10,7 +10,11 @@ impl AppState {
         if self.sidebar_collapsed || sidebar.width <= 1 || sidebar.height == 0 {
             return Rect::default();
         }
-        crate::ui::workspace_list_rect(sidebar, self.sidebar_section_split)
+        crate::ui::workspace_list_rect_with_agent_panel(
+            sidebar,
+            self.sidebar_section_split,
+            self.show_agent_panel,
+        )
     }
 
     pub(super) fn agent_panel_rect(&self) -> Rect {
@@ -18,8 +22,11 @@ impl AppState {
         if self.sidebar_collapsed || sidebar.width <= 1 || sidebar.height == 0 {
             return Rect::default();
         }
-        let (_, detail_area) =
-            crate::ui::expanded_sidebar_sections(sidebar, self.sidebar_section_split);
+        let (_, detail_area) = crate::ui::expanded_sidebar_sections_with_agent_panel(
+            sidebar,
+            self.sidebar_section_split,
+            self.show_agent_panel,
+        );
         detail_area
     }
 
@@ -276,9 +283,10 @@ impl AppState {
         if self.sidebar_collapsed {
             return false;
         }
-        let rect = crate::ui::sidebar_section_divider_rect(
+        let rect = crate::ui::sidebar_section_divider_rect_with_agent_panel(
             self.view.sidebar_rect,
             self.sidebar_section_split,
+            self.show_agent_panel,
         );
         rect.width > 0
             && col >= rect.x
@@ -321,7 +329,10 @@ impl AppState {
             return None;
         }
 
-        let (ws_area, _, _) = crate::ui::collapsed_sidebar_sections(self.view.sidebar_rect);
+        let (ws_area, _, _) = crate::ui::collapsed_sidebar_sections_with_agent_panel(
+            self.view.sidebar_rect,
+            self.show_agent_panel,
+        );
         if ws_area == Rect::default() || row < ws_area.y || row >= ws_area.y + ws_area.height {
             return None;
         }
@@ -338,7 +349,10 @@ impl AppState {
             return None;
         }
 
-        let (_, _, detail_area) = crate::ui::collapsed_sidebar_sections(self.view.sidebar_rect);
+        let (_, _, detail_area) = crate::ui::collapsed_sidebar_sections_with_agent_panel(
+            self.view.sidebar_rect,
+            self.show_agent_panel,
+        );
         let detail_content_area = Rect::new(
             detail_area.x,
             detail_area.y,
@@ -470,10 +484,7 @@ impl AppState {
             return false;
         }
 
-        let (_, detail_area) = crate::ui::expanded_sidebar_sections(
-            self.view.sidebar_rect,
-            self.sidebar_section_split,
-        );
+        let detail_area = self.agent_panel_rect();
         let rect = crate::ui::agent_panel_toggle_rect(detail_area, self.agent_panel_sort);
         rect.width > 0
             && col >= rect.x
@@ -865,6 +876,44 @@ mod tests {
 
         assert_eq!(app.state.agent_panel_sort, AgentPanelSort::Priority);
         assert_eq!(app.state.agent_panel_scroll, 0);
+    }
+
+    #[test]
+    fn hidden_agent_panel_removes_desktop_sidebar_mouse_targets() {
+        let mut app = app_for_mouse_test();
+        app.state.show_agent_panel = false;
+        let sidebar = app.state.view.sidebar_rect;
+        let (_, visible_agent_area) = crate::ui::expanded_sidebar_sections_with_agent_panel(
+            sidebar,
+            app.state.sidebar_section_split,
+            app.state.show_agent_panel,
+        );
+        let (_, normal_agent_area) =
+            crate::ui::expanded_sidebar_sections(sidebar, app.state.sidebar_section_split);
+        let normal_toggle =
+            crate::ui::agent_panel_toggle_rect(normal_agent_area, app.state.agent_panel_sort);
+        let normal_divider =
+            crate::ui::sidebar_section_divider_rect(sidebar, app.state.sidebar_section_split);
+
+        assert_eq!(visible_agent_area, Rect::default());
+        assert_eq!(app.state.agent_panel_rect(), Rect::default());
+        assert!(!app
+            .state
+            .on_agent_panel_sort_toggle(normal_toggle.x, normal_toggle.y));
+        assert!(!app
+            .state
+            .on_sidebar_section_divider(normal_divider.x, normal_divider.y));
+        assert_eq!(
+            app.state.agent_detail_target_at(normal_agent_area.y + 3),
+            None
+        );
+
+        app.state.sidebar_collapsed = true;
+        assert_eq!(
+            app.state
+                .collapsed_agent_detail_target_at(sidebar.height / 2),
+            None
+        );
     }
 
     #[test]
