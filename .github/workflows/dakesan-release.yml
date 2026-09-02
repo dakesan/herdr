@@ -1,0 +1,460 @@
+name: Dakesan custom release
+
+on:
+  schedule:
+    - cron: "23 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RUST_TOOLCHAIN_VERSION: 1.96.1
+  PATCH_BASE_TAG: v0.8.2
+  CUSTOM_BRANCH: dakesan
+  MANIFEST_PATH: distribution/dakesan-preview.json
+
+concurrency:
+  group: dakesan-custom-release
+  cancel-in-progress: false
+
+jobs:
+  sync-upstream:
+    if: github.repository == 'dakesan/herdr'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout custom branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ env.CUSTOM_BRANCH }}
+          fetch-depth: 0
+
+      - name: Fast-forward fork master
+        run: |
+          set -euo pipefail
+          git remote add upstream https://github.com/herdrdev/herdr.git
+          git fetch upstream master
+          git push origin refs/remotes/upstream/master:refs/heads/master
+
+  plan:
+    if: github.repository == 'dakesan/herdr'
+    needs: sync-upstream
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      should_build: ${{ steps.plan.outputs.should_build }}
+      upstream_tag: ${{ steps.plan.outputs.upstream_tag }}
+      upstream_commit: ${{ steps.plan.outputs.upstream_commit }}
+      base_version: ${{ steps.plan.outputs.base_version }}
+      build_id: ${{ steps.plan.outputs.build_id }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      protocol: ${{ steps.plan.outputs.protocol }}
+      endpoint_generation: ${{ steps.plan.outputs.endpoint_generation }}
+    steps:
+      - name: Checkout custom branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ env.CUSTOM_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Select upstream stable release
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          upstream_tag="$(gh api repos/herdrdev/herdr/releases/latest --jq .tag_name)"
+          if ! [[ "$upstream_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "error: upstream release tag has an unsupported format: $upstream_tag" >&2
+            exit 1
+          fi
+
+          git fetch https://github.com/herdrdev/herdr.git "refs/tags/$upstream_tag:refs/tags/$upstream_tag" --force
+          upstream_commit="$(git rev-list -n 1 "$upstream_tag^{commit}")"
+          base_version="${upstream_tag#v}"
+
+          patch_file="$RUNNER_TEMP/dakesan.patch"
+          git diff --binary "$PATCH_BASE_TAG".."$GITHUB_SHA" -- \
+            src \
+            docs/next/website/src/content/docs/configuration.mdx \
+            docs/next/website/src/data/config-reference.json > "$patch_file"
+          if [ ! -s "$patch_file" ]; then
+            echo "error: custom patch is empty" >&2
+            exit 1
+          fi
+          patch_sha="$(sha256sum "$patch_file" | awk '{print $1}')"
+          build_id="${base_version}-${upstream_commit:0:12}-${patch_sha:0:12}"
+          release_tag="dakesan-$build_id"
+
+          protocol="$(git show "$upstream_tag:src/protocol/wire.rs" | sed -n 's/^pub const PROTOCOL_VERSION: u32 = \([0-9][0-9]*\);/\1/p')"
+          endpoint_generation=null
+          if git cat-file -e "$upstream_tag:src/protocol/endpoint.rs" 2>/dev/null; then
+            endpoint_generation="$(git show "$upstream_tag:src/protocol/endpoint.rs" | sed -n 's/^pub const ENDPOINT_PROTOCOL_GENERATION: u32 = \([0-9][0-9]*\);/\1/p')"
+          fi
+          if [ -z "$protocol" ] || [ -z "$endpoint_generation" ]; then
+            echo "error: could not read available protocol metadata from $upstream_tag" >&2
+            exit 1
+          fi
+
+          current_build_id=""
+          if [ -f "$MANIFEST_PATH" ]; then
+            current_build_id="$(jq -r '.build_id // ""' "$MANIFEST_PATH")"
+          fi
+          should_build=true
+          if [ "$current_build_id" = "$build_id" ] && gh release view "$release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            should_build=false
+          fi
+
+          {
+            echo "should_build=$should_build"
+            echo "upstream_tag=$upstream_tag"
+            echo "upstream_commit=$upstream_commit"
+            echo "base_version=$base_version"
+            echo "build_id=$build_id"
+            echo "release_tag=$release_tag"
+            echo "protocol=$protocol"
+            echo "endpoint_generation=$endpoint_generation"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Upstream stable: $upstream_tag ($upstream_commit)"
+          echo "Custom build: $build_id"
+          echo "Build required: $should_build"
+
+  test:
+    if: needs.plan.outputs.should_build == 'true'
+    needs: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout custom branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ env.CUSTOM_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Apply custom patch to upstream release
+        env:
+          UPSTREAM_TAG: ${{ needs.plan.outputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          patch_file="$RUNNER_TEMP/dakesan.patch"
+          git diff --binary "$PATCH_BASE_TAG"..HEAD -- \
+            src \
+            docs/next/website/src/content/docs/configuration.mdx \
+            docs/next/website/src/data/config-reference.json > "$patch_file"
+          git fetch https://github.com/herdrdev/herdr.git "refs/tags/$UPSTREAM_TAG:refs/tags/$UPSTREAM_TAG" --force
+          git checkout --detach "$UPSTREAM_TAG"
+          git apply --3way --index "$patch_file"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          components: rustfmt,clippy
+
+      - name: Install Rust tools
+        uses: taiki-e/install-action@fd2f5e3d644b484055ebf4268f474c565f148f25 # v2.81.9
+        with:
+          tool: just,cargo-nextest
+
+      - name: Install Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+        with:
+          bun-version: 1.3.14
+
+      - name: Install Zig
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          cache-bin: false
+          key: dakesan-test-${{ needs.plan.outputs.upstream_tag }}
+
+      - name: Run full Linux checks
+        run: just ci 'all()'
+
+  build:
+    if: needs.plan.outputs.should_build == 'true'
+    needs: [plan, test]
+    strategy:
+      matrix:
+        include:
+          - target: aarch64-apple-darwin
+            os: macos-latest
+            asset: herdr-macos-aarch64
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            asset: herdr-linux-x86_64
+          - target: aarch64-unknown-linux-musl
+            os: ubuntu-latest
+            asset: herdr-linux-aarch64
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      TARGET: ${{ matrix.target }}
+      ASSET_NAME: ${{ matrix.asset }}
+      HERDR_BUILD_CHANNEL: preview
+      HERDR_BUILD_ID: ${{ needs.plan.outputs.build_id }}
+      HERDR_BUILD_COMMIT: ${{ needs.plan.outputs.upstream_commit }}
+      LIBGHOSTTY_VT_OPTIMIZE: ReleaseFast
+      LIBGHOSTTY_VT_SIMD: "true"
+    steps:
+      - name: Checkout custom branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ env.CUSTOM_BRANCH }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Apply custom patch to upstream release
+        env:
+          UPSTREAM_TAG: ${{ needs.plan.outputs.upstream_tag }}
+        run: |
+          set -euo pipefail
+          patch_file="$RUNNER_TEMP/dakesan.patch"
+          git diff --binary "$PATCH_BASE_TAG"..HEAD -- \
+            src \
+            docs/next/website/src/content/docs/configuration.mdx \
+            docs/next/website/src/data/config-reference.json > "$patch_file"
+          git fetch https://github.com/herdrdev/herdr.git "refs/tags/$UPSTREAM_TAG:refs/tags/$UPSTREAM_TAG" --force
+          git checkout --detach "$UPSTREAM_TAG"
+          git apply --3way --index "$patch_file"
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8 # v1
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN_VERSION }}
+          targets: ${{ env.TARGET }}
+
+      - name: Install Zig
+        if: runner.os == 'Linux'
+        uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+
+      - name: Restore Homebrew Zig cache
+        if: runner.os == 'macOS'
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4
+        with:
+          path: ~/Library/Caches/Homebrew/downloads
+          key: homebrew-zig-0.15-${{ runner.os }}-${{ runner.arch }}
+          restore-keys: |
+            homebrew-zig-0.15-${{ runner.os }}-
+
+      - name: Install patched Zig and build tools on macOS
+        if: runner.os == 'macOS'
+        run: |
+          HOMEBREW_NO_AUTO_UPDATE=1 brew install zig@0.15 cmake ninja
+          echo "$(brew --prefix zig@0.15)/bin" >> "$GITHUB_PATH"
+
+      - name: Prefer official Ubuntu mirrors over Azure
+        if: runner.os == 'Linux'
+        run: |
+          if [ -f /etc/apt/apt-mirrors.txt ]; then
+            sudo sed -i '/azure.archive.ubuntu.com/d' /etc/apt/apt-mirrors.txt
+            echo "Using apt mirrors:"
+            cat /etc/apt/apt-mirrors.txt
+          fi
+
+      - name: Install Linux build tools
+        if: runner.os == 'Linux'
+        run: |
+          sudo find /etc/apt/sources.list.d -type f \( -iname '*microsoft*' -o -iname '*azure-cli*' \) -print -delete
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build musl-tools gcc-aarch64-linux-gnu crossbuild-essential-arm64
+
+      - name: Set Linux aarch64 linker
+        if: matrix.target == 'aarch64-unknown-linux-musl'
+        run: echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+
+      - name: Restore Rust cache
+        uses: Swatinem/rust-cache@e18b497796c12c097a38f9edb9d0641fb99eee32 # v2
+        with:
+          cache-bin: false
+          key: dakesan-${{ env.TARGET }}-${{ needs.plan.outputs.upstream_tag }}
+
+      - name: Build custom Herdr
+        run: cargo build --release --locked --target "$TARGET"
+
+      - name: Verify and package binary
+        env:
+          BASE_VERSION: ${{ needs.plan.outputs.base_version }}
+        run: |
+          set -euo pipefail
+          binary="target/$TARGET/release/herdr"
+          expected="herdr $BASE_VERSION-preview.$HERDR_BUILD_ID"
+          case "$TARGET" in
+            aarch64-unknown-linux-musl)
+              readelf -h "$binary" | grep -Eq 'Machine:[[:space:]]+AArch64'
+              strings "$binary" > "$RUNNER_TEMP/herdr-strings"
+              grep -Fq "$HERDR_BUILD_ID" "$RUNNER_TEMP/herdr-strings"
+              ;;
+            *)
+              actual="$("$binary" --version)"
+              if [ "$actual" != "$expected" ]; then
+                echo "error: built binary identity is '$actual', expected '$expected'" >&2
+                exit 1
+              fi
+              ;;
+          esac
+          cp "$binary" "$ASSET_NAME"
+
+      - name: Upload binary
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
+        with:
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}
+          if-no-files-found: error
+
+  publish:
+    if: needs.plan.outputs.should_build == 'true'
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout custom branch
+        uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
+        with:
+          ref: ${{ env.CUSTOM_BRANCH }}
+          fetch-depth: 0
+
+      - name: Download binaries
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8
+        with:
+          pattern: herdr-*
+          merge-multiple: true
+
+      - name: Publish release and manifest
+        env:
+          GH_TOKEN: ${{ github.token }}
+          UPSTREAM_TAG: ${{ needs.plan.outputs.upstream_tag }}
+          UPSTREAM_COMMIT: ${{ needs.plan.outputs.upstream_commit }}
+          BASE_VERSION: ${{ needs.plan.outputs.base_version }}
+          BUILD_ID: ${{ needs.plan.outputs.build_id }}
+          RELEASE_TAG: ${{ needs.plan.outputs.release_tag }}
+          PROTOCOL: ${{ needs.plan.outputs.protocol }}
+          ENDPOINT_GENERATION: ${{ needs.plan.outputs.endpoint_generation }}
+        run: |
+          set -euo pipefail
+          assets=(herdr-macos-aarch64 herdr-linux-x86_64 herdr-linux-aarch64)
+          for asset in "${assets[@]}"; do
+            if [ ! -f "$asset" ]; then
+              echo "error: missing build asset $asset" >&2
+              exit 1
+            fi
+          done
+
+          built_at="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+          notes_file="$RUNNER_TEMP/release-notes.md"
+          printf '%s\n\n%s\n%s\n' \
+            "Custom Herdr build for $UPSTREAM_TAG." \
+            "Includes the configurable desktop Agents panel and the dakesan update source." \
+            "Upstream commit: $UPSTREAM_COMMIT" > "$notes_file"
+
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            release_target="$(gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --json targetCommitish --jq .targetCommitish)"
+            if [ "$release_target" != "$GITHUB_SHA" ]; then
+              echo "error: existing release $RELEASE_TAG targets $release_target, expected $GITHUB_SHA" >&2
+              exit 1
+            fi
+            download_dir="$RUNNER_TEMP/existing-release"
+            mkdir -p "$download_dir"
+            for asset in "${assets[@]}"; do
+              gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "$asset" --dir "$download_dir"
+            done
+          else
+            gh release create "$RELEASE_TAG" "${assets[@]}" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$GITHUB_SHA" \
+              --title "Herdr $BASE_VERSION custom build" \
+              --notes-file "$notes_file" \
+              --prerelease
+            download_dir="."
+          fi
+
+          macos_asset="herdr-macos-aarch64"
+          linux_x86_asset="herdr-linux-x86_64"
+          linux_arm_asset="herdr-linux-aarch64"
+          macos_sha256="$(sha256sum "$download_dir/$macos_asset" | awk '{print $1}')"
+          linux_x86_sha256="$(sha256sum "$download_dir/$linux_x86_asset" | awk '{print $1}')"
+          linux_arm_sha256="$(sha256sum "$download_dir/$linux_arm_asset" | awk '{print $1}')"
+          release_url="https://github.com/$GITHUB_REPOSITORY/releases/download/$RELEASE_TAG"
+
+          mkdir -p "$(dirname "$MANIFEST_PATH")"
+          jq -n \
+            --arg base_version "$BASE_VERSION" \
+            --arg build_id "$BUILD_ID" \
+            --arg commit "$UPSTREAM_COMMIT" \
+            --arg built_at "$built_at" \
+            --arg notes "$(cat "$notes_file")" \
+            --arg macos_url "$release_url/$macos_asset" \
+            --arg macos_sha256 "$macos_sha256" \
+            --arg linux_x86_url "$release_url/$linux_x86_asset" \
+            --arg linux_x86_sha256 "$linux_x86_sha256" \
+            --arg linux_arm_url "$release_url/$linux_arm_asset" \
+            --arg linux_arm_sha256 "$linux_arm_sha256" \
+            --argjson protocol "$PROTOCOL" \
+            --argjson endpoint_generation "$ENDPOINT_GENERATION" \
+            '{
+              schema_version: 1,
+              channel: "preview",
+              base_version: $base_version,
+              build_id: $build_id,
+              commit: $commit,
+              built_at: $built_at,
+              protocol: $protocol,
+              endpoint_generation: $endpoint_generation,
+              notes: $notes,
+              assets: {
+                "macos-aarch64": {
+                  url: $macos_url,
+                  sha256: $macos_sha256
+                },
+                "linux-x86_64": {
+                  url: $linux_x86_url,
+                  sha256: $linux_x86_sha256
+                },
+                "linux-aarch64": {
+                  url: $linux_arm_url,
+                  sha256: $linux_arm_sha256
+                }
+              },
+              builds: {
+                ($build_id): {
+                  base_version: $base_version,
+                  commit: $commit,
+                  built_at: $built_at,
+                  protocol: $protocol,
+                  endpoint_generation: $endpoint_generation,
+                  assets: {
+                    "macos-aarch64": {
+                      url: $macos_url,
+                      sha256: $macos_sha256
+                    },
+                    "linux-x86_64": {
+                      url: $linux_x86_url,
+                      sha256: $linux_x86_sha256
+                    },
+                    "linux-aarch64": {
+                      url: $linux_arm_url,
+                      sha256: $linux_arm_sha256
+                    }
+                  }
+                }
+              }
+            }' > "$MANIFEST_PATH"
+
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add "$MANIFEST_PATH"
+          git diff --cached --quiet || git commit -m "chore: publish $RELEASE_TAG manifest"
+          git pull --rebase origin "$CUSTOM_BRANCH"
+          git push origin "HEAD:$CUSTOM_BRANCH"
