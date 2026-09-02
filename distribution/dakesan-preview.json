@@ -1,0 +1,48 @@
+{
+  "schema_version": 1,
+  "channel": "preview",
+  "base_version": "0.8.2",
+  "build_id": "0.8.2-9eb521456ac0-997161fe781d",
+  "commit": "9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c",
+  "built_at": "2026-09-02T22:11:24Z",
+  "protocol": 20,
+  "endpoint_generation": null,
+  "notes": "Custom Herdr build for v0.8.2.\n\nIncludes the configurable desktop Agents panel and the dakesan update source.\nUpstream commit: 9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c",
+  "assets": {
+    "macos-aarch64": {
+      "url": "https://github.com/dakesan/herdr/releases/download/dakesan-0.8.2-9eb521456ac0-997161fe781d/herdr-macos-aarch64",
+      "sha256": "a38a0b94bb37cfd2e64e321f19b18527ce7ffa98a241ad638015b813f5523924"
+    },
+    "linux-x86_64": {
+      "url": "https://github.com/dakesan/herdr/releases/download/dakesan-0.8.2-9eb521456ac0-997161fe781d/herdr-linux-x86_64",
+      "sha256": "b9558b59ac4bbd4a83f63c0f7040a870b3b7d2073ec7bc644561ca52950ff40e"
+    },
+    "linux-aarch64": {
+      "url": "https://github.com/dakesan/herdr/releases/download/dakesan-0.8.2-9eb521456ac0-997161fe781d/herdr-linux-aarch64",
+      "sha256": "da2b5c0b2a95ed4b4a8201d874a0bc76561f4bf501196b9d24224fb496141998"
+    }
+  },
+  "builds": {
+    "0.8.2-9eb521456ac0-997161fe781d": {
+      "base_version": "0.8.2",
+      "commit": "9eb521456ac0d19d3ab3d9d7cea3cca10baa8a4c",
+      "built_at": "2026-09-02T22:11:24Z",
+      "protocol": 20,
+      "endpoint_generation": null,
+      "assets": {
+        "macos-aarch64": {
+          "url": "https://github.com/dakesan/herdr/releases/download/dakesan-0.8.2-9eb521456ac0-997161fe781d/herdr-macos-aarch64",
+          "sha256": "a38a0b94bb37cfd2e64e321f19b18527ce7ffa98a241ad638015b813f5523924"
+        },
+        "linux-x86_64": {
+          "url": "https://github.com/dakesan/herdr/releases/download/dakesan-0.8.2-9eb521456ac0-997161fe781d/herdr-linux-x86_64",
+          "sha256": "b9558b59ac4bbd4a83f63c0f7040a870b3b7d2073ec7bc644561ca52950ff40e"
+        },
+        "linux-aarch64": {
+          "url": "https://github.com/dakesan/herdr/releases/download/dakesan-0.8.2-9eb521456ac0-997161fe781d/herdr-linux-aarch64",
+          "sha256": "da2b5c0b2a95ed4b4a8201d874a0bc76561f4bf501196b9d24224fb496141998"
+        }
+      }
+    }
+  }
+}
