@@ -65,6 +65,40 @@ pub(crate) fn expanded_sidebar_sections(area: Rect, split_ratio: f32) -> (Rect, 
     )
 }
 
+/// Same as [`expanded_sidebar_sections`], but collapses the Agents section away
+/// when `show_agent_panel` is false so Spaces get the full sidebar height.
+pub(crate) fn expanded_sidebar_sections_with_agent_panel(
+    area: Rect,
+    split_ratio: f32,
+    show_agent_panel: bool,
+) -> (Rect, Rect) {
+    if show_agent_panel {
+        return expanded_sidebar_sections(area, split_ratio);
+    }
+
+    let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
+    if content.is_empty() {
+        return (Rect::default(), Rect::default());
+    }
+    (
+        content,
+        Rect::new(content.x, content.bottom(), content.width, 0),
+    )
+}
+
+/// Same as [`sidebar_section_divider_rect`], but reports no divider when the
+/// Agents section is hidden.
+pub(crate) fn sidebar_section_divider_rect_with_agent_panel(
+    area: Rect,
+    split_ratio: f32,
+    show_agent_panel: bool,
+) -> Rect {
+    if !show_agent_panel {
+        return Rect::default();
+    }
+    sidebar_section_divider_rect(area, split_ratio)
+}
+
 pub(crate) fn sidebar_section_divider_rect(area: Rect, split_ratio: f32) -> Rect {
     let content = Rect::new(area.x, area.y, area.width.saturating_sub(1), area.height);
     if content.width == 0 || content.height < 6 {
