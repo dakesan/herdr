@@ -118,6 +118,13 @@ impl UpdateChannel {
             Self::Preview => "preview",
         }
     }
+
+    fn default_manifest_url(self) -> &'static str {
+        match self {
+            Self::Stable => STABLE_UPDATE_MANIFEST_URL,
+            Self::Preview => PREVIEW_UPDATE_MANIFEST_URL,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -319,12 +326,37 @@ impl ReleaseInfo {
     }
 }
 
-fn fetch_update_manifest() -> Result<UpdateManifest, String> {
-    fetch_json_manifest(STABLE_UPDATE_MANIFEST_URL)
+fn configured_manifest_url(channel: UpdateChannel) -> Result<String, String> {
+    manifest_url_for(
+        channel,
+        crate::config::Config::load()
+            .config
+            .update
+            .manifest_url
+            .as_deref(),
+    )
 }
 
-fn fetch_preview_manifest() -> Result<PreviewManifest, String> {
-    fetch_json_manifest(PREVIEW_UPDATE_MANIFEST_URL)
+fn manifest_url_for(
+    channel: UpdateChannel,
+    configured_url: Option<&str>,
+) -> Result<String, String> {
+    let Some(configured_url) = configured_url else {
+        return Ok(channel.default_manifest_url().to_string());
+    };
+    let configured_url = configured_url.trim();
+    if !configured_url.starts_with("https://") {
+        return Err("update.manifest_url must use https://".into());
+    }
+    Ok(configured_url.to_string())
+}
+
+fn fetch_update_manifest(url: &str) -> Result<UpdateManifest, String> {
+    fetch_json_manifest(url)
+}
+
+fn fetch_preview_manifest(url: &str) -> Result<PreviewManifest, String> {
+    fetch_json_manifest(url)
 }
 
 fn fetch_json_manifest<T>(url: &str) -> Result<T, String>
@@ -493,6 +525,9 @@ fn release_info_from_preview_manifest(
         })
         .ok_or_else(|| format!("no binary for {asset_key} in preview manifest"))?;
     let download_url = asset.url.clone();
+    let sha256 = asset.sha256.clone().ok_or_else(|| {
+        format!("preview manifest asset {asset_key} is missing a SHA-256 checksum")
+    })?;
 
     Ok(Some(ReleaseInfo {
         identity: preview_display_version(&manifest.base_version, build_id),
@@ -503,7 +538,7 @@ fn release_info_from_preview_manifest(
         #[cfg(not(windows))]
         target_protocol: Some(manifest.protocol),
         download_url,
-        sha256: asset.sha256.clone(),
+        sha256: Some(sha256),
         #[cfg(windows)]
         package_format: asset.package_format()?,
         notes_body,
@@ -521,11 +556,12 @@ fn first_windows_stable_is_pending(
 
 fn check_latest() -> Result<Option<ReleaseInfo>, String> {
     let channel = UpdateChannel::configured();
+    let manifest_url = configured_manifest_url(channel)?;
     if channel == UpdateChannel::Preview {
-        return release_info_from_preview_manifest(&fetch_preview_manifest()?);
+        return release_info_from_preview_manifest(&fetch_preview_manifest(&manifest_url)?);
     }
 
-    let manifest = fetch_update_manifest()?;
+    let manifest = fetch_update_manifest(&manifest_url)?;
     if first_windows_stable_is_pending(&manifest, cfg!(windows), crate::build_info::is_preview()) {
         tracing::info!("waiting for the first stable Windows release");
         return Ok(None);
@@ -2306,7 +2342,9 @@ fn auto_update_homebrew(events: tokio::sync::mpsc::Sender<crate::events::AppEven
 }
 
 fn homebrew_release_notes_body(version: &Version) -> String {
-    let manifest = fetch_update_manifest().ok();
+    let manifest = configured_manifest_url(UpdateChannel::Stable)
+        .and_then(|url| fetch_update_manifest(&url))
+        .ok();
     homebrew_release_notes_body_from_manifest(version, manifest.as_ref())
 }
 
@@ -3285,6 +3323,37 @@ mod tests {
     }
 
     #[test]
+    fn manifest_url_defaults_by_channel_and_accepts_https_override() {
+        assert_eq!(
+            manifest_url_for(UpdateChannel::Stable, None).unwrap(),
+            STABLE_UPDATE_MANIFEST_URL
+        );
+        assert_eq!(
+            manifest_url_for(UpdateChannel::Preview, None).unwrap(),
+            PREVIEW_UPDATE_MANIFEST_URL
+        );
+        assert_eq!(
+            manifest_url_for(
+                UpdateChannel::Preview,
+                Some("  https://example.com/custom-preview.json  ")
+            )
+            .unwrap(),
+            "https://example.com/custom-preview.json"
+        );
+    }
+
+    #[test]
+    fn manifest_url_rejects_non_https_override() {
+        let error = manifest_url_for(
+            UpdateChannel::Preview,
+            Some("http://example.com/custom-preview.json"),
+        )
+        .unwrap_err();
+
+        assert_eq!(error, "update.manifest_url must use https://");
+    }
+
+    #[test]
     fn platform_target_is_known() {
         let (os, arch) = platform_target();
         assert!(os == "linux" || os == "macos", "os: {os}");
@@ -3556,6 +3625,33 @@ mod tests {
         assert_eq!(release.identity, "9.9.9-preview.2026-06-02-abcdef123456");
         assert_eq!(release.target_protocol, Some(77));
         assert_eq!(release.sha256.as_deref(), Some("deadbeef"));
+    }
+
+    #[test]
+    fn preview_update_requires_asset_checksum() {
+        let (os, arch) = platform_target();
+        let asset_key = format!("{os}-{arch}");
+        let json = format!(
+            r####"{{
+                "channel": "preview",
+                "base_version": "9.9.9",
+                "build_id": "2026-06-02-abcdef123456",
+                "commit": "abcdef1234567890",
+                "built_at": "2026-06-02T03:00:00Z",
+                "protocol": 77,
+                "notes": "### Fixed\n- One",
+                "assets": {{
+                    "{asset_key}": {{
+                        "url": "https://example.com/herdr"
+                    }}
+                }}
+            }}"####
+        );
+        let manifest: PreviewManifest = serde_json::from_str(&json).unwrap();
+
+        assert!(release_info_from_preview_manifest(&manifest)
+            .unwrap_err()
+            .contains("missing a SHA-256 checksum"));
     }
 
     #[test]

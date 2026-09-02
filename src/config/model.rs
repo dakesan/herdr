@@ -28,10 +28,11 @@ impl UpdateChannelConfig {
     }
 }
 
-#[derive(Debug, Clone, Copy, Deserialize)]
+#[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct UpdateConfig {
     pub channel: UpdateChannelConfig,
+    pub manifest_url: Option<String>,
     pub version_check: bool,
     pub manifest_check: bool,
 }
@@ -40,6 +41,7 @@ impl Default for UpdateConfig {
     fn default() -> Self {
         Self {
             channel: default_update_channel(),
+            manifest_url: None,
             version_check: true,
             manifest_check: true,
         }
@@ -1242,18 +1244,24 @@ mod tests {
     fn update_config_defaults_and_parses() {
         let default_config = Config::default();
         assert_eq!(default_config.update.channel, default_update_channel());
+        assert_eq!(default_config.update.manifest_url, None);
         assert!(default_config.update.version_check);
         assert!(default_config.update.manifest_check);
 
         let toml = r#"
 [update]
 channel = "preview"
+manifest_url = "https://example.com/herdr-preview.json"
 version_check = false
 manifest_check = false
 "#;
         let config: Config = toml::from_str(toml).unwrap();
         assert_eq!(config.update.channel, UpdateChannelConfig::Preview);
         assert_eq!(config.update.channel.as_str(), "preview");
+        assert_eq!(
+            config.update.manifest_url.as_deref(),
+            Some("https://example.com/herdr-preview.json")
+        );
         assert!(!config.update.version_check);
         assert!(!config.update.manifest_check);
     }

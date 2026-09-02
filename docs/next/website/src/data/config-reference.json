@@ -224,6 +224,12 @@
           ]
         },
         {
+          "key": "update.manifest_url",
+          "type": "string",
+          "default": "unset",
+          "description": "Optional HTTPS update manifest URL for the selected channel. Unset uses the official Herdr manifest."
+        },
+        {
           "key": "update.version_check",
           "type": "boolean",
           "default": "true",

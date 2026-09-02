@@ -157,6 +157,9 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # so existing preview installs stay there until explicitly switched.
 # channel = "stable"
 
+# Override the update manifest for the selected channel. The URL must use HTTPS.
+# manifest_url = "https://example.com/herdr-preview.json"
+
 # Check herdr.dev for new Herdr versions in the background.
 # version_check = true
 
