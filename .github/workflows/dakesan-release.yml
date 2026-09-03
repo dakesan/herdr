@@ -2,7 +2,9 @@ name: Dakesan custom release
 
 on:
   schedule:
-    - cron: "23 */6 * * *"
+    # GitHub cron cannot express an exact 96-hour interval across month boundaries.
+    # Run on days 1, 5, 9, 13, 17, 21, 25, and 29 at 00:23 UTC.
+    - cron: "23 0 1,5,9,13,17,21,25,29 * *"
   workflow_dispatch:
 
 permissions:
