@@ -13,7 +13,7 @@ permissions:
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   RUST_TOOLCHAIN_VERSION: 1.96.1
-  PATCH_BASE_TAG: v0.8.2
+  PATCH_BASE_TAG: v0.9.0
   CUSTOM_BRANCH: dakesan
   MANIFEST_PATH: distribution/dakesan-preview.json
 
